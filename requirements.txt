@@ -1,0 +1,5 @@
+stix2>=2.1.0
+taxii2-client>=2.2.2
+six>=1.15.0
+rdflib>=5
+pytest>=6.2.1
