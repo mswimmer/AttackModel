@@ -1,5 +1,5 @@
 import pytest
-from attackcti import rdf
+from attackmodel import rdf
 from rdflib.plugins.sparql import prepareQuery
 from rdflib.namespace import RDF, RDFS, XSD, DC, DCTERMS, FOAF, SKOS
 
