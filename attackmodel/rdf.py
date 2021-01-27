@@ -7,7 +7,7 @@ from rdflib.plugins.sparql import prepareQuery
 import stix2
 from taxii2client.v20 import Server, Collection
 
-logging.basicConfig(level=logging.INFO)
+#logging.basicConfig(level=logging.INFO)
 
 CORE = Namespace("http://ontologies.ti-semantics.com/core#")
 CTI = Namespace("http://ontologies.ti-semantics.com/cti#")
@@ -15,8 +15,13 @@ XCTI = Namespace("http://attack.mitre.org/cti-extension#")
 PLATFORM = Namespace("http://ontologies.ti-semantics.com/platform#")
 SCORE = Namespace("http://ontologies.ti-semantics.com/score#")
 
+Enterprise = '"Enterprise ATT&CK"'
+Mobile = 'Mobile ATT&CK'
+ICS = 'ICS ATT&CK'
+
 class AttackModel():
-    def __init__(self, store=IOMemory(), namespace='https://attack.mitre.org/', prefix='attack'):
+    def __init__(self, store=IOMemory(), namespace='https://attack.mitre.org/', prefix='attack', log_level=logging.INFO):
+        logging.basicConfig(level=log_level)
         self.store=store
         self.graph = ConjunctiveGraph(identifier=URIRef('https://attack.mitre.org/'), store=store)
         self.graph.bind('dcterms', DCTERMS)
@@ -33,53 +38,57 @@ class AttackModel():
         self.ns = Namespace(namespace)
         self.graph.bind(prefix, self.ns)
         #logging.debug("Initial graph size: %d" % len(self.graph))
-        self.graph.remove( (None, None, None) )
+        #self.graph.remove( (None, None, None) )
         #logging.debug("Cleaned graph size: %d" % len(self.graph))
 
-    def load_taxii(self):
+    def load_taxii(self, groups=None):
+        # TODO: pass the taxii server in as a parameter so that it can be configured
         server = Server("https://cti-taxii.mitre.org/taxii/")
         api_root = server.api_roots[0]
+        if not groups:
+            groups = [Enterprise, Mobile, ICS]
+        collection_classes = {Enterprise: CTI.EnterpriseCatalog, Mobile: CTI.MobileCatalog, ICS: CTI.ICSCatalog}
         #logging.debug(api_root.collections)
         for c in api_root.collections:
             logging.debug(c.title + ": " + c.url)
             collection_objects = Collection(c.url).get_objects()
             #logging.debug("Size: %d" % len(collection_objects) )
             
-            if c.title == "Enterprise ATT&CK":
+            if c.title in groups:
                 self.collections.append(
                     {
-                        'collection': collection_objects, 
-                        'url': c.url, 
-                        'title': c.title, 
-                        'class': CTI.EnterpriseCatalog, 
+                        'collection': collection_objects,
+                        'url': c.url,
+                        'title': c.title,
+                        'class': collection_classes[c.title],
                         'graph': Graph(store=self.store, identifier=c.url) 
                     }
                 )
-            elif c.title == "Mobile ATT&CK":
-                self.collections.append(
-                    {
-                        'collection': collection_objects, 
-                        'url': c.url, 
-                        'title': c.title, 
-                        'class': CTI.MobileCatalog, 
-                        'graph': Graph(store=self.store, identifier=c.url) 
-                    }
-                )
-            elif c.title == "ICS ATT&CK":
-                self.collections.append(
-                    {
-                        'collection': collection_objects, 
-                        'url': c.url, 
-                        'title': c.title, 
-                        'class': CTI.ICSCatalog, 
-                        'graph': Graph(store=self.store, identifier=c.url) 
-                    }
-                )
-            elif c.title == "PRE-ATT&CK":
-                # This is now defunct
-                pass
-            else:
-                logging.warning("Unknown collection `%s`" % c.title)
+            #elif c.title == "Mobile ATT&CK":
+            #    self.collections.append(
+            #        {
+            #            'collection': collection_objects, 
+            #            'url': c.url, 
+            #            'title': c.title, 
+            #            'class': CTI.MobileCatalog, 
+            #            'graph': Graph(store=self.store, identifier=c.url) 
+            #        }
+            #    )
+            #elif c.title == "ICS ATT&CK":
+            #    self.collections.append(
+            #        {
+            #            'collection': collection_objects, 
+            #            'url': c.url, 
+            #            'title': c.title, 
+            #            'class': CTI.ICSCatalog, 
+            ##            'graph': Graph(store=self.store, identifier=c.url) 
+            #        }
+            #    )
+            #elif c.title == "PRE-ATT&CK":
+            #    # This is now defunct
+            #    pass
+            #else:
+            #    logging.warning("Unknown collection `%s`" % c.title)
 
     def load_stix(self, file_name=None, url=None, title=None, rdf_class=SKOS.Collection):
         with open(file_name, 'r') as f:
@@ -97,6 +106,8 @@ class AttackModel():
             )
 
     def convert(self, old_school_reification=True, subgraph_reification=False):
+        # clear graph
+        self.graph.remove( (None, None, None) )
         for collection in self.collections:
             logging.debug("type: %s, spec: %s, id: %s", 
                 collection['collection']['type'], 
@@ -177,24 +188,42 @@ class AttackModel():
 
     def postprocess_relationships(self, subgraph, subgraph_reification=False, old_school_reification=True):
         q1 = prepareQuery("""
-            SELECT ?subject ?source ?target
+            SELECT ?subject ?sourceLabel ?source ?target ?targetLabel
             WHERE {
                 ?subject a ?relationship ;
                     cti:relationSource ?source ;
                     cti:relationTarget ?target .
+                    OPTIONAL {
+                       ?target skos:prefLabel ?targetLabel .
+                    }
+                    OPTIONAL {
+                        ?source skos:prefLabel ?sourceLabel .
+                    }
             }
             """, initNs = { "cti": CTI, "dcterms": DCTERMS, "skos": SKOS })
 
         for relationships in [
-            {'class': CTI.UsesRelationship, 'pred': CTI.uses}, 
-            {'class': CTI.MitigatesRelationship, 'pred': CTI.mitigates},
+            {'class': CTI.UsesRelationship, 'pred': CTI.uses, 'desc': 'uses'}, 
+            {'class': CTI.MitigatesRelationship, 'pred': CTI.mitigates, 'desc': 'mitigates'},
             {'class': CTI.RevokedByRelationship, 'pred': CTI.revokedBy},
-            #{'class': CTI.SubtechniqueOfRelationship, 'pred': CTI.subtechniqueOf}
             {'class': CTI.SubtechniqueOfRelationship, 'pred': SKOS.narrower}
             ]:
             logging.debug("Processing relationship %s", relationships['class'])
             # search for relationships of this class
             for row in self.graph.query(q1, initBindings={'relationship': relationships['class'] }):
+                try:
+                    label = row['sourceLabel'] + ' ' + relationships['desc'] + ' ' + row['targetLabel']
+                    logging.debug("Generating new label %s", label)
+                    self.graph.add( (row['subject'], SKOS.prefLabel, Literal(label)) )
+                except Exception as e:
+                    if 'sourceLabel' not in row:
+                        logging.warning("Missing source label for %s", row['subject'])
+                    if 'targetLabel' not in row:
+                        logging.warning("Missing target label for %s", row['subject'])
+                    logging.warning(row)
+                    logging.warning(type(row['sourceLabel']))
+                    logging.warning(type(row['targetLabel']))
+                    logging.warning(e)
                 #logging.debug(row)
                 if subgraph_reification or old_school_reification:
                     if subgraph_reification:
