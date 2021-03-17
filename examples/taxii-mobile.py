@@ -9,8 +9,6 @@ model.convert(
 with open('mobile-attack.n3', 'w') as outfile:
     outfile.write(model.graph.serialize(format="n3", encoding='utf-8').decode('utf-8'))
 
-#model = rdf.AttackModel()
-#model.load_taxii(groups=[rdf.Mobile])
 model.convert(
     subgraph_reification=False,
     old_school_reification=True

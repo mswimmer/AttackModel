@@ -1,4 +1,8 @@
 from attackmodel import rdf
+import logging
+
+LOGGER = logging.getLogger()
+LOGGER.setLevel('DEBUG')
 
 model = rdf.AttackModel()
 model.load_taxii(groups=[rdf.Enterprise])

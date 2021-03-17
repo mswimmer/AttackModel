@@ -7,7 +7,7 @@ from rdflib.plugins.sparql import prepareQuery
 import stix2
 from taxii2client.v20 import Server, Collection
 
-#logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 
 CORE = Namespace("http://ontologies.ti-semantics.com/core#")
 CTI = Namespace("http://ontologies.ti-semantics.com/cti#")
@@ -15,9 +15,15 @@ XCTI = Namespace("http://attack.mitre.org/cti-extension#")
 PLATFORM = Namespace("http://ontologies.ti-semantics.com/platform#")
 SCORE = Namespace("http://ontologies.ti-semantics.com/score#")
 
-Enterprise = '"Enterprise ATT&CK"'
+#Enterprise = '"Enterprise ATT&CK"'
+#Mobile = 'Mobile ATT&CK'
+#ICS = 'ICS ATT&CK'
+Enterprise = 'Enterprise ATT&CK'
 Mobile = 'Mobile ATT&CK'
 ICS = 'ICS ATT&CK'
+
+def isin(key, collection):
+    return key in collection and collection[key]
 
 class AttackModel():
     def __init__(self, store=IOMemory(), namespace='https://attack.mitre.org/', prefix='attack', log_level=logging.INFO):
@@ -47,14 +53,17 @@ class AttackModel():
         api_root = server.api_roots[0]
         if not groups:
             groups = [Enterprise, Mobile, ICS]
+        groups = [g.lower() for g in groups]
+        logging.debug("Groups to collect from:"+str(groups))
         collection_classes = {Enterprise: CTI.EnterpriseCatalog, Mobile: CTI.MobileCatalog, ICS: CTI.ICSCatalog}
         #logging.debug(api_root.collections)
         for c in api_root.collections:
             logging.debug(c.title + ": " + c.url)
             collection_objects = Collection(c.url).get_objects()
-            #logging.debug("Size: %d" % len(collection_objects) )
+            logging.debug("Size: %d" % len(collection_objects) )
             
-            if c.title in groups:
+            if c.title.lower() in groups:
+                logging.debug("Collecting data from: "+ c.title)
                 self.collections.append(
                     {
                         'collection': collection_objects,
@@ -110,16 +119,19 @@ class AttackModel():
         self.graph.remove( (None, None, None) )
         for collection in self.collections:
             logging.debug("type: %s, spec: %s, id: %s", 
-                collection['collection']['type'], 
-                collection['collection']["spec_version"], 
+                collection['collection']['type'],
+                collection['collection'].get("spec_version", ""),
                 collection['collection']['id'] )
-            if collection['collection']['type'] == "bundle" and collection['collection']["spec_version"] == "2.0":
+            #if collection['collection']['type'] == "bundle" and collection['collection']["spec_version"] >= "2.0":
+            if collection['collection']['type'] == "bundle":
                 bundle_subject = self.ns[collection['collection']['id']]
                 subgraph = collection['graph']
                 subgraph.add( (bundle_subject, RDF.type, SKOS.Collection ) )
-                subgraph.add( (bundle_subject, RDF.type,  collection['class'] ) )
-                subgraph.add( (bundle_subject, SKOS.prefLabel, Literal(collection['title']) ) )
-                subgraph.add( (bundle_subject, DCTERMS.source, URIRef(collection['url']) ) )
+                subgraph.add( (bundle_subject, RDF.type, collection['class'] ) )
+                if isin('title', collection):
+                    subgraph.add( (bundle_subject, SKOS.prefLabel, Literal(collection['title']) ) )
+                if isin('url', collection):
+                    subgraph.add( (bundle_subject, DCTERMS.source, URIRef(collection['url']) ) )
                 for stix_object in collection['collection']['objects']:
                     subject = self.ns[stix_object['id']]
                     self.processor(subgraph, subject, stix_object)
@@ -368,6 +380,8 @@ class AttackModel():
                     "course-of-action": CTI.CourseOfAction,
                     "intrusion-set": CTI.IntrusionSet,
                     "malware": CTI.Malware,
+                    "report": CTI.Report,
+                    "indicator": CTI.Indicator,
                     "marking-definition": CTI.MarkingDefinition,
                     "tool": CTI.Tool,        
                     "relationship": CTI.Relationship,
